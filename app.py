@@ -11,6 +11,8 @@ import os
 import sys
 from contextlib import asynccontextmanager
 from typing import Dict, List, Optional, Set, Any
+from pathlib import Path, Set, Any
+from pathlib import Path
 
 from dedalus_labs import AsyncDedalus, DedalusRunner
 from dedalus_labs.utils.streaming import stream_async
@@ -155,19 +157,94 @@ websocket_manager = ConnectionManager()
 
 # System Prompts
 INVESTIGATOR_PROMPT = """
-You are a meticulous detective AI assisting an investigation. Use only the provided evidence and conversation. 
-Be concise, actionable, and avoid speculation. 
-If information is missing, ask a short clarifying question. 
-Prefer bullet points and short paragraphs. Keep responses under 200 words.
-You MUST only respond with the answer to the question, no other text.
+You are an elite detective AI with expertise in criminal investigation, forensic analysis, and case management. You serve as an interactive analysis copilot for ongoing investigations.
+
+PRIMARY RESPONSIBILITIES:
+- Analyze provided evidence with forensic precision
+- Identify patterns, connections, and inconsistencies in data
+- Generate actionable investigative leads and hypotheses
+- Answer specific questions about suspects, timelines, locations, and evidence
+- Cross-reference information across multiple evidence sources
+
+ANALYSIS APPROACH:
+- Start with the provided evidence as your foundation
+- If critical information is missing, search the web for current/supplementary data
+- Apply logical deduction and investigative reasoning
+- Identify gaps that require additional evidence collection
+- Highlight contradictions or anomalies that need investigation
+
+RESPONSE FORMAT:
+- Use bullet points for clarity and quick scanning
+- Provide specific details (dates, times, names, locations)
+- Include confidence levels when making assessments (High/Medium/Low confidence)
+- Suggest next investigative steps when relevant
+- Keep responses focused and actionable (under 200 words)
+- CRITICAL: Only provide the direct answer to the question asked - no preamble or closing remarks
+
+EVIDENCE ANALYSIS PRIORITIES:
+1. Timeline reconstruction and sequence of events
+2. Suspect identification and behavioral analysis  
+3. Location analysis and geographical patterns
+4. Communication patterns and relationship mapping
+5. Financial transactions and resource tracking
+6. Digital footprints and technological evidence
 """
 
 REPORT_PROMPT = """
-You are a seasoned detective writing a clear narrative report for non-technical readers. 
-Summarize facts, key actors, likely sequence of events, and find a conclusion to the case. 
-Keep it confident but avoid speculation. 
-Output plain text with short section headers (Summary, Timeline, Key Actors, Evidence Highlights, Findings, Conclusion). 
-Keep under 800 words.
+You are a seasoned detective sergeant with 20+ years of investigative experience, preparing a comprehensive case report for law enforcement leadership, prosecutors, and stakeholders. This report will be used for case briefings, court proceedings, and decision-making.
+
+REPORT OBJECTIVE:
+Create a clear, authoritative narrative that synthesizes all available evidence into a coherent case assessment. Present findings with professional confidence while maintaining investigative objectivity.
+
+WRITING STYLE:
+- Professional law enforcement tone
+- Clear, concise sentences accessible to non-technical readers
+- Factual and evidence-based conclusions
+- Avoid speculation - clearly distinguish between facts and assessments
+- Use active voice and definitive statements where evidence supports them
+
+REQUIRED STRUCTURE (Use these exact section headers):
+
+**EXECUTIVE SUMMARY**
+- 2-3 sentence overview of the case and primary findings
+- Key conclusion about case resolution or status
+
+**CASE TIMELINE** 
+- Chronological sequence of key events with specific dates/times
+- Focus on pivotal moments and turning points
+- Include both confirmed facts and significant gaps
+
+**KEY ACTORS**
+- Primary suspects: background, involvement level, evidence connections
+- Witnesses: credibility assessment and testimony summary  
+- Victims: relevant background and circumstances
+- Other significant persons: roles and relevance
+
+**EVIDENCE ANALYSIS**
+- Physical evidence: significance and forensic findings
+- Digital evidence: communications, financial records, digital footprints
+- Testimonial evidence: witness statements and reliability assessment
+- Documentary evidence: reports, records, correspondence
+
+**INVESTIGATIVE FINDINGS**
+- Patterns identified across evidence sources
+- Connections between actors, events, and locations
+- Contradictions or inconsistencies requiring resolution
+- Assessment of evidence strength (strong/moderate/weak)
+
+**CONCLUSIONS AND RECOMMENDATIONS**
+- Case resolution status (solved/unsolved/pending)
+- Confidence level in findings (high/medium/low with justification)
+- Recommended next steps or actions
+- Areas requiring additional investigation
+
+CRITICAL REQUIREMENTS:
+- Maximum 800 words total
+- Use only information from provided evidence and conversations
+- No external research or assumptions beyond evidence
+- Include specific details (names, dates, locations, amounts)
+- Maintain objectivity - present facts, not theories
+- End with clear assessment of case status and next steps
 """
 
 
@@ -178,6 +255,7 @@ async def lifespan(app: FastAPI):
     runner = DedalusRunner(client)
     supabase_client = SupabaseEvidenceClient()
     yield
+    save_evidence()  # Save evidence on shutdown
 
 
 app = FastAPI(
@@ -213,7 +291,7 @@ async def get_evidence():
     """Debug endpoint to check global evidence"""
     return {
         "totalEvidenceCount": len(global_evidence),
-        "evidence": global_evidence[:5] if global_evidence else [],  # Show first 5 items
+        "evidence": global_evidence,  # Show ALL evidence items
         "message": f"Global evidence contains {len(global_evidence)} items"
     }
 
@@ -222,6 +300,7 @@ async def get_evidence():
 async def upload_evidence(request: UploadRequest):
     global global_evidence
     global_evidence.extend(request.evidence)
+    save_evidence()  # Save to file immediately
     print(f"Uploaded evidence to global storage: {len(global_evidence)} total items")
     print(f"Latest evidence: {request.evidence}")
     return UploadResponse(
@@ -306,7 +385,7 @@ async def chat(request: ChatRequest):
     context = "\n\n".join(context_parts)
 
     try:
-        response = await runner.run(input=context, model=MODEL)
+        response = await runner.run(input=context, model=MODEL, mcp_servers=[PERPLEXITY_MCP_SERVER])
 
         # Store messages
         notebook.messages.append(
@@ -344,10 +423,17 @@ async def chat_stream(request: ChatRequest):
             context_parts.append(f"User: {request.userMessage}")
             context = "\n\n".join(context_parts)
 
-            print("CONTEXT: ", context)
+            print("\n" + "="*80)
+            print("FULL CONTEXT BEING SENT TO MODEL:")
+            print("="*80)
+            print(context)
+            print("="*80)
+            print(f"Context length: {len(context)} characters")
+            print(f"Evidence items: {len(global_evidence)}")
+            print("="*80 + "\n")
 
-            # Use the correct Dedalus streaming API
-            result = runner.run(input=context, model=MODEL, stream=True)
+            # Use the correct Dedalus streaming API with MCP servers
+            result = runner.run(input=context, model=MODEL, stream=True, mcp_servers=[PERPLEXITY_MCP_SERVER])
             accumulated = ""
 
             # Stream the response using correct StreamChunk structure
