@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from typing import Dict, List, Optional
 
 from dedalus_labs import AsyncDedalus, DedalusRunner
+from dedalus_labs.utils.streaming import stream_async
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -27,13 +28,12 @@ class Message(BaseModel):
 
 
 class UploadRequest(BaseModel):
-    notebookId: str
     evidence: List[str]
 
 
 class UploadResponse(BaseModel):
-    notebookId: str
     totalEvidenceCount: int
+    message: str
 
 
 class ChatRequest(BaseModel):
@@ -52,12 +52,12 @@ class ReportResponse(BaseModel):
 # In-Memory Storage
 class NotebookState:
     def __init__(self):
-        self.evidence: List[str] = []
         self.messages: List[Message] = []
 
 
 # Global storage and Dedalus client
 notebooks: Dict[str, NotebookState] = {}
+global_evidence: List[str] = []  # Global evidence storage
 client = None
 runner = None
 
@@ -67,6 +67,7 @@ You are a meticulous detective AI assisting an investigation. Use only the provi
 Be concise, actionable, and avoid speculation. 
 If information is missing, ask a short clarifying question. 
 Prefer bullet points and short paragraphs. Keep responses under 200 words.
+You MUST only respond with the answer to the question, no other text.
 """
 
 REPORT_PROMPT = """
@@ -114,12 +115,25 @@ async def health():
     return {"status": "healthy"}
 
 
+@app.get("/api/evidence")
+async def get_evidence():
+    """Debug endpoint to check global evidence"""
+    return {
+        "totalEvidenceCount": len(global_evidence),
+        "evidence": global_evidence[:5] if global_evidence else [],  # Show first 5 items
+        "message": f"Global evidence contains {len(global_evidence)} items"
+    }
+
+
 @app.post("/api/upload", response_model=UploadResponse)
 async def upload_evidence(request: UploadRequest):
-    notebook = get_notebook(request.notebookId)
-    notebook.evidence.extend(request.evidence)
+    global global_evidence
+    global_evidence.extend(request.evidence)
+    print(f"Uploaded evidence to global storage: {len(global_evidence)} total items")
+    print(f"Latest evidence: {request.evidence}")
     return UploadResponse(
-        notebookId=request.notebookId, totalEvidenceCount=len(notebook.evidence)
+        totalEvidenceCount=len(global_evidence),
+        message=f"Successfully uploaded {len(request.evidence)} evidence items to global storage"
     )
 
 
@@ -132,8 +146,8 @@ async def chat(request: ChatRequest):
 
     # Build context
     context_parts = [INVESTIGATOR_PROMPT]
-    if notebook.evidence:
-        context_parts.append("\nEVIDENCE:\n" + "\n".join(notebook.evidence))
+    if global_evidence:
+        context_parts.append("\nEVIDENCE:\n" + "\n".join(global_evidence))
 
     # Add conversation history
     for msg in notebook.messages:
@@ -172,8 +186,8 @@ async def chat_stream(request: ChatRequest):
 
             # Build context
             context_parts = [INVESTIGATOR_PROMPT]
-            if notebook.evidence:
-                context_parts.append("\nEVIDENCE:\n" + "\n".join(notebook.evidence))
+            if global_evidence:
+                context_parts.append("\nEVIDENCE:\n" + "\n".join(global_evidence))
 
             for msg in notebook.messages:
                 role = "User" if msg.role == "user" else "Assistant"
@@ -184,17 +198,28 @@ async def chat_stream(request: ChatRequest):
 
             print("CONTEXT: ", context)
 
+            # Use the correct Dedalus streaming API
             result = runner.run(input=context, model=MODEL, stream=True)
             accumulated = ""
 
+            # Stream the response using correct StreamChunk structure
             async for chunk in result:
-                if hasattr(chunk, "content") and chunk.content:
-                    accumulated += chunk.content
-                    yield f"data: {json.dumps({'type': 'content', 'content': chunk.content})}\n\n"
-
-                if hasattr(chunk, "final_output") and chunk.final_output:
-                    accumulated = chunk.final_output
-                    yield f"data: {json.dumps({'type': 'final', 'content': chunk.final_output})}\n\n"
+                # StreamChunk has choices[0].delta.content structure
+                if chunk.choices and len(chunk.choices) > 0:
+                    choice = chunk.choices[0]
+                    delta = choice.delta
+                    
+                    # Check if this chunk has content
+                    if delta.content:
+                        accumulated += delta.content
+                        print(f"Streaming content: {delta.content}")
+                        yield f"data: {json.dumps({'type': 'content', 'content': delta.content})}\n\n"
+                    
+                    # Check if streaming is finished
+                    if choice.finish_reason == 'stop':
+                        print(f"Streaming finished. Total accumulated: {accumulated}")
+                        yield f"data: {json.dumps({'type': 'final', 'content': accumulated})}\n\n"
+                        break
 
             # Store messages
             notebook.messages.append(
@@ -203,10 +228,12 @@ async def chat_stream(request: ChatRequest):
             notebook.messages.append(
                 Message(role="assistant", content=accumulated, ts=int(time.time()))
             )
+            print(f"Final accumulated: {accumulated}")
 
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
         except Exception as e:
+            print(f"Streaming error: {str(e)}")
             yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
 
     return EventSourceResponse(generate())
@@ -220,13 +247,9 @@ async def generate_report():
     # Build report context with ALL conversations from all notebooks
     context_parts = [REPORT_PROMPT]
     
-    # Find the first notebook with evidence and use it
-    evidence_used = False
-    for notebook_id, notebook in notebooks.items():
-        if notebook.evidence and not evidence_used:
-            context_parts.append("\nEVIDENCE:\n" + "\n".join(notebook.evidence))
-            evidence_used = True
-            break
+    # Use global evidence
+    if global_evidence:
+        context_parts.append("\nEVIDENCE:\n" + "\n".join(global_evidence))
     
     # Add ALL conversations from ALL notebooks as context
     all_conversations = []
