@@ -202,30 +202,43 @@ def analyze_social_connections(context_text: str) -> str:
     G.add_edge("Person A", "Person B", relationship="colleague", strength="Strong", details="Works together at OpenAI")
     
     # Create visualization
-    plt.figure(figsize=(12, 8))
-    pos = nx.spring_layout(G, k=2, iterations=50)
+    plt.figure(figsize=(18, 12), dpi=150)
+    pos = nx.spring_layout(G, k=3, iterations=100, seed=42)
     
     # Draw nodes with colors based on roles
     node_colors = {{'suspect': 'red', 'witness': 'blue', 'victim': 'green', 'other': 'gray'}}
     colors = [node_colors.get(G.nodes[node].get('role', 'other'), 'gray') for node in G.nodes()]
     
-    nx.draw_networkx_nodes(G, pos, node_color=colors, node_size=1000, alpha=0.7)
-    nx.draw_networkx_labels(G, pos, font_size=8, font_weight='bold')
+    nx.draw_networkx_nodes(G, pos, node_color=colors, node_size=2000, alpha=0.85, linewidths=1.5, edgecolors="black")
+    nx.draw_networkx_labels(G, pos, font_size=12, font_weight="bold", bbox={{"boxstyle": "round,pad=0.2", "fc": "white", "alpha": 0.8}})
     
     # Draw edges with varying thickness based on strength
-    edge_weights = {{'Strong': 3, 'Medium': 2, 'Weak': 1}}
+    edge_weights = {{'Strong': 4, 'Medium': 2.5, 'Weak': 1.5}}
     for edge in G.edges(data=True):
         strength = edge[2].get('strength', 'Medium')
         nx.draw_networkx_edges(G, pos, edgelist=[(edge[0], edge[1])], 
-                              width=edge_weights.get(strength, 2), alpha=0.6)
+                              width=edge_weights.get(strength, 2.5), alpha=0.6)
     
-    # Add edge labels
-    edge_labels = {{(u, v): d.get('relationship', '') for u, v, d in G.edges(data=True)}}
-    nx.draw_networkx_edge_labels(G, pos, edge_labels, font_size=6)
+    # Add edge labels showing the relationship (and fallback to details if missing)
+    edge_labels = {{
+        (u, v): (d.get('relationship') or d.get('details') or '')
+        for u, v, d in G.edges(data=True)
+    }}
+    nx.draw_networkx_edge_labels(
+        G,
+        pos,
+        edge_labels=edge_labels,
+        font_size=12,
+        font_color='black',
+        label_pos=0.55,
+        rotate=False,
+        bbox={{"boxstyle": "round,pad=0.2", "fc": "white", "alpha": 0.7}}
+    )
     
-         plt.title("Social Network Analysis - Investigation Connections")
+         plt.title("Social Network Analysis - Investigation Connections", fontsize=16)
      plt.axis('off')
-     plt.tight_layout()
+     plt.margins(0.1)
+     plt.tight_layout(pad=2.0)
      
      # Save plot to file and display it
      import os
@@ -233,11 +246,11 @@ def analyze_social_connections(context_text: str) -> str:
      
      # Create a filename with timestamp
      timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-     filename = f"network_graph_{timestamp}.png"
+     filename = f"network_graph_{{timestamp}}.png"
      
      # Save the plot
-     plt.savefig(filename, dpi=150, bbox_inches='tight')
-     print(f"Network graph saved as: {filename}")
+     plt.savefig(filename, dpi=200, bbox_inches='tight')
+     print(f"Network graph saved as: {{filename}}")
      
      # Show the plot (this will open in a popup window)
      plt.show()
@@ -384,7 +397,6 @@ async def lifespan(app: FastAPI):
     runner = DedalusRunner(client)
     supabase_client = SupabaseEvidenceClient()
     yield
-    save_evidence()  # Save evidence on shutdown
 
 
 app = FastAPI(
