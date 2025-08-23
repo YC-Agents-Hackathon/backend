@@ -1170,12 +1170,13 @@ def execute_python_code(code: str) -> tuple[str, str, float]:
             temp_file = f.name
         
         try:
-            # Execute the code with timeout (10 seconds)
+            # Execute the code; extend/disable timeout if interactive plot is requested
+            exec_timeout = None if ('plt.show(' in modified_code) else 10
             result = subprocess.run(
                 [sys.executable, temp_file],
                 capture_output=True,
                 text=True,
-                timeout=10
+                timeout=exec_timeout
             )
             
             execution_time = time.time() - start_time
