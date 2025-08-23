@@ -4,6 +4,10 @@ Detective LLM Backend - Simplified Implementation
 
 import json
 import time
+import subprocess
+import tempfile
+import os
+import sys
 from contextlib import asynccontextmanager
 from typing import Dict, List, Optional
 
@@ -47,6 +51,17 @@ class ChatResponse(BaseModel):
 
 class ReportResponse(BaseModel):
     report: str
+
+
+class CodeExecutionRequest(BaseModel):
+    code: str
+    language: str
+
+
+class CodeExecutionResponse(BaseModel):
+    output: str
+    error: Optional[str] = None
+    execution_time: float
 
 
 # In-Memory Storage
@@ -285,6 +300,79 @@ async def generate_report():
         print(f"Report error: {str(e)}")  # Debug
         raise HTTPException(
             status_code=500, detail=f"Report generation failed: {str(e)}"
+        )
+
+
+def execute_python_code(code: str) -> tuple[str, str, float]:
+    """Execute Python code safely in a temporary file with timeout."""
+    start_time = time.time()
+    
+    try:
+        # Create a temporary file to execute the code
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+            f.write(code)
+            temp_file = f.name
+        
+        try:
+            # Execute the code with timeout (10 seconds)
+            result = subprocess.run(
+                [sys.executable, temp_file],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            
+            execution_time = time.time() - start_time
+            
+            if result.returncode == 0:
+                return result.stdout, "", execution_time
+            else:
+                return result.stdout, result.stderr, execution_time
+                
+        finally:
+            # Clean up the temporary file
+            if os.path.exists(temp_file):
+                os.unlink(temp_file)
+                
+    except subprocess.TimeoutExpired:
+        execution_time = time.time() - start_time
+        return "", "Code execution timed out (10 seconds limit)", execution_time
+    except Exception as e:
+        execution_time = time.time() - start_time
+        return "", f"Execution error: {str(e)}", execution_time
+
+
+@app.post("/api/execute", response_model=CodeExecutionResponse)
+async def execute_code(request: CodeExecutionRequest):
+    """Execute code safely with basic security restrictions."""
+    
+    # Basic security checks
+    dangerous_imports = [
+        'os', 'subprocess', 'sys', 'shutil', 'glob', 'pickle', 
+        'socket', 'urllib', 'requests', '__import__', 'eval', 'exec'
+    ]
+    
+    code_lower = request.code.lower()
+    for dangerous in dangerous_imports:
+        if dangerous in code_lower:
+            return CodeExecutionResponse(
+                output="",
+                error=f"Security restriction: '{dangerous}' is not allowed",
+                execution_time=0.0
+            )
+    
+    if request.language == "python":
+        output, error, exec_time = execute_python_code(request.code)
+        return CodeExecutionResponse(
+            output=output,
+            error=error if error else None,
+            execution_time=exec_time
+        )
+    else:
+        return CodeExecutionResponse(
+            output="",
+            error=f"Language '{request.language}' is not supported yet. Only Python is currently available.",
+            execution_time=0.0
         )
 
 
