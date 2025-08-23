@@ -16,6 +16,7 @@ from dedalus_labs import AsyncDedalus, DedalusRunner
 from dedalus_labs.utils.streaming import stream_async
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from starlette.requests import Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
@@ -637,6 +638,208 @@ async def get_available_agent_types():
         "agent_types": agents_info,
         "total_count": len(agents_info)
     }
+
+
+@app.get("/workflow-analysis/{case_id}")
+async def workflow_analysis_page(case_id: str, request: Request):
+    """Serve workflow analysis page for monitoring multi-agent runs"""
+    # Find active or recent runs for this case
+    active_runs = []
+    for run_id, run in global_orchestrator.active_runs.items():
+        # Check if this run is related to the case (you might want to add case_id to run context)
+        if run.context and run.context.get("case_id") == case_id:
+            active_runs.append({
+                "run_id": run_id,
+                "status": run.status.value,
+                "progress": run.progress,
+                "started_at": run.started_at.isoformat() if run.started_at else None,
+                "agents": [
+                    {
+                        "agent_id": agent.agent_id,
+                        "agent_type": agent.agent_type,
+                        "agent_name": agent.agent_name,
+                        "status": agent.status.value,
+                        "progress": agent.progress,
+                        "current_step": agent.current_step,
+                        "error": agent.error
+                    }
+                    for agent in run.agents
+                ]
+            })
+    
+    # Check if this is an API request (JSON) or browser request (HTML)
+    accept_header = request.headers.get("accept", "")
+    if "application/json" in accept_header:
+        # Return JSON for API requests
+        return {"runs": active_runs}
+    
+    # Return HTML page with real-time updates
+    html_content = f"""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Multi-Agent Workflow Analysis - Case {case_id}</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+        <script>
+            tailwind.config = {{
+                theme: {{
+                    extend: {{
+                        animation: {{
+                            'pulse-slow': 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+                        }}
+                    }}
+                }}
+            }}
+        </script>
+        <style>
+            .status-pending {{ background-color: #f3f4f6; color: #374151; }}
+            .status-running {{ background-color: #dbeafe; color: #1e40af; }}
+            .status-completed {{ background-color: #dcfce7; color: #166534; }}
+            .status-failed {{ background-color: #fecaca; color: #dc2626; }}
+            .status-cancelled {{ background-color: #f3f4f6; color: #6b7280; }}
+        </style>
+    </head>
+    <body class="bg-gray-50 min-h-screen">
+        <div class="container mx-auto px-4 py-8">
+            <div class="mb-8">
+                <h1 class="text-3xl font-bold text-gray-900 mb-2">Multi-Agent Workflow Analysis</h1>
+                <p class="text-gray-600">Real-time monitoring for Case ID: <span class="font-mono bg-gray-100 px-2 py-1 rounded">{case_id}</span></p>
+            </div>
+            
+            <div id="runs-container">
+                <!-- Runs will be populated here -->
+            </div>
+            
+            <div id="no-runs" class="text-center py-12 bg-white rounded-lg shadow-sm border" style="display: none;">
+                <div class="text-gray-400 text-6xl mb-4">🤖</div>
+                <h2 class="text-xl font-semibold text-gray-700 mb-2">No Active Analysis Runs</h2>
+                <p class="text-gray-500">Start a multi-agent analysis from the case view to see real-time progress here.</p>
+            </div>
+        </div>
+        
+        <script>
+            let ws = null;
+            
+            function connectWebSocket(runId) {{
+                const wsUrl = `ws://localhost:8000/ws/multi-agent/${{runId}}`;
+                ws = new WebSocket(wsUrl);
+                
+                ws.onmessage = function(event) {{
+                    const data = JSON.parse(event.data);
+                    updateRunDisplay(data);
+                }};
+                
+                ws.onerror = function(error) {{
+                    console.log('WebSocket error:', error);
+                }};
+                
+                ws.onclose = function() {{
+                    console.log('WebSocket connection closed');
+                    // Try to reconnect after 3 seconds
+                    setTimeout(() => connectWebSocket(runId), 3000);
+                }};
+            }}
+            
+            function updateRunDisplay(data) {{
+                // Update the UI with new data
+                const runElement = document.getElementById(`run-${{data.run_id}}`);
+                if (runElement) {{
+                    // Update progress bars, status badges, etc.
+                    const progressBar = runElement.querySelector('.progress-bar');
+                    if (progressBar) {{
+                        progressBar.style.width = `${{data.progress * 100}}%`;
+                    }}
+                    
+                    const statusBadge = runElement.querySelector('.status-badge');
+                    if (statusBadge) {{
+                        statusBadge.textContent = data.status.toUpperCase();
+                        statusBadge.className = `status-badge px-3 py-1 rounded-full text-xs font-medium status-${{data.status}}`;
+                    }}
+                }}
+            }}
+            
+            function renderRuns(runs) {{
+                const container = document.getElementById('runs-container');
+                const noRuns = document.getElementById('no-runs');
+                
+                if (runs.length === 0) {{
+                    container.style.display = 'none';
+                    noRuns.style.display = 'block';
+                    return;
+                }}
+                
+                container.style.display = 'block';
+                noRuns.style.display = 'none';
+                
+                container.innerHTML = runs.map(run => `
+                    <div id="run-${{run.run_id}}" class="bg-white rounded-lg shadow-sm border mb-6 overflow-hidden">
+                        <div class="px-6 py-4 border-b bg-gray-50">
+                            <div class="flex items-center justify-between">
+                                <h3 class="text-lg font-semibold text-gray-900">Analysis Run: ${{run.run_id}}</h3>
+                                <div class="flex items-center space-x-3">
+                                    <span class="status-badge px-3 py-1 rounded-full text-xs font-medium status-${{run.status}}">${{run.status.toUpperCase()}}</span>
+                                    <span class="text-sm text-gray-500">${{Math.round(run.progress * 100)}}% Complete</span>
+                                </div>
+                            </div>
+                            <div class="mt-3">
+                                <div class="bg-gray-200 rounded-full h-2">
+                                    <div class="progress-bar bg-blue-500 h-2 rounded-full transition-all duration-500" style="width: ${{run.progress * 100}}%"></div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="p-6">
+                            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                ${{run.agents.map(agent => `
+                                    <div class="border rounded-lg p-4">
+                                        <div class="flex items-center justify-between mb-2">
+                                            <h4 class="font-medium text-gray-900">${{agent.agent_name}}</h4>
+                                            <span class="px-2 py-1 rounded text-xs font-medium status-${{agent.status}}">${{agent.status.toUpperCase()}}</span>
+                                        </div>
+                                        <p class="text-sm text-gray-600 mb-2">${{agent.current_step || 'Initializing...'}}</p>
+                                        <div class="bg-gray-200 rounded-full h-1.5">
+                                            <div class="bg-green-500 h-1.5 rounded-full transition-all duration-300" style="width: ${{agent.progress * 100}}%"></div>
+                                        </div>
+                                        ${{agent.error ? `<p class="text-xs text-red-600 mt-2">${{agent.error}}</p>` : ''}}
+                                    </div>
+                                `).join('')}}
+                            </div>
+                        </div>
+                    </div>
+                `).join('');
+                
+                // Connect WebSocket for the first active run
+                const activeRun = runs.find(r => r.status === 'running');
+                if (activeRun && !ws) {{
+                    connectWebSocket(activeRun.run_id);
+                }}
+            }}
+            
+            // Initial load
+            const initialRuns = {json.dumps(active_runs)};
+            renderRuns(initialRuns);
+            
+            // Refresh every 5 seconds
+            setInterval(async () => {{
+                try {{
+                    const response = await fetch(`/workflow-analysis/{case_id}`);
+                    const data = await response.json();
+                    if (data.runs) {{
+                        renderRuns(data.runs);
+                    }}
+                }} catch (error) {{
+                    console.error('Failed to refresh runs:', error);
+                }}
+            }}, 5000);
+        </script>
+    </body>
+    </html>
+    """
+    
+    from fastapi.responses import HTMLResponse
+    return HTMLResponse(content=html_content)
 
 
 @app.websocket("/ws/multi-agent/{run_id}")

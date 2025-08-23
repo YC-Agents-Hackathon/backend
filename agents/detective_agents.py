@@ -71,27 +71,34 @@ EVIDENCE:
             
             self.outputs["analysis"] = result
             
-            # Create notebook cells
-            self.add_notebook_cell("markdown", {
-                "content": f"# Pattern Recognition Analysis\n\n{result.get('summary', '')}"
-            })
+            # Create comprehensive markdown content
+            full_content = f"## Pattern Recognition Analysis\n\n**Summary**: {result.get('summary', 'No summary available')}\n\n"
             
             if result.get("patterns"):
-                patterns_content = "## Identified Patterns\n\n"
+                full_content += "### 🔍 Identified Patterns\n\n"
                 for p in result["patterns"]:
-                    patterns_content += f"- **{p.get('pattern', 'Unknown')}** (Confidence: {p.get('confidence', 0)}%)\n"
+                    full_content += f"**Pattern**: {p.get('pattern', 'Unknown')} \n"
+                    full_content += f"**Confidence**: {p.get('confidence', 0)}% \n"
                     if p.get('evidence'):
-                        patterns_content += f"  - Evidence: {', '.join(p['evidence'])}\n"
-                
-                self.add_notebook_cell("markdown", {"content": patterns_content})
+                        full_content += f"**Evidence**: {', '.join(p['evidence'])} \n"
+                    full_content += "\n"
             
             if result.get("anomalies"):
-                anomalies_content = "## Anomalies Detected\n\n"
+                full_content += "### ⚠️ Anomalies Detected\n\n"
                 for a in result["anomalies"]:
-                    anomalies_content += f"- **{a.get('anomaly', 'Unknown')}** (Severity: {a.get('severity', 'unknown')})\n"
-                    anomalies_content += f"  - {a.get('details', '')}\n"
-                
-                self.add_notebook_cell("markdown", {"content": anomalies_content})
+                    severity_emoji = {"high": "🔴", "medium": "🟡", "low": "🟢"}.get(a.get('severity', 'unknown'), "⚪")
+                    full_content += f"{severity_emoji} **{a.get('anomaly', 'Unknown')}** (Severity: {a.get('severity', 'unknown')})\n"
+                    full_content += f"   {a.get('details', '')}\n\n"
+            
+            if result.get("correlations"):
+                full_content += "### 📊 Correlations\n\n"
+                for c in result["correlations"]:
+                    full_content += f"**Variables**: {', '.join(c.get('variables', []))}\n"
+                    full_content += f"**Strength**: {c.get('strength', 0)}\n"
+                    full_content += f"**Significance**: {c.get('significance', '')}\n\n"
+            
+            # Add single comprehensive cell instead of multiple cells
+            self.add_notebook_cell("markdown", {"content": full_content})
             
             self.update_progress(1.0, "Pattern analysis complete")
             
@@ -158,35 +165,40 @@ EVIDENCE:
             
             self.outputs["timeline"] = result
             
-            # Create notebook cells
-            self.add_notebook_cell("markdown", {
-                "content": "# Timeline Reconstruction\n\nChronological analysis of events based on available evidence."
-            })
+            # Create comprehensive timeline analysis
+            full_content = "## Timeline Reconstruction\n\n**Analysis**: Chronological sequence of events based on available evidence.\n\n"
             
             if result.get("timeline"):
-                timeline_content = "## Event Timeline\n\n"
-                for event in result["timeline"]:
-                    timeline_content += f"**{event.get('timestamp', 'Unknown time')}**: {event.get('event', '')}\n"
-                    timeline_content += f"- Confidence: {event.get('confidence', 0)}%\n"
-                    timeline_content += f"- Source: {event.get('source', 'Unknown')}\n\n"
-                
-                self.add_notebook_cell("markdown", {"content": timeline_content})
+                full_content += "### 📅 Event Timeline\n\n"
+                for i, event in enumerate(result["timeline"], 1):
+                    timestamp = event.get('timestamp', 'Unknown time')
+                    confidence = event.get('confidence', 0)
+                    confidence_indicator = "🟢" if confidence >= 80 else "🟡" if confidence >= 60 else "🔴"
+                    
+                    full_content += f"**{i}.** `{timestamp}` {confidence_indicator}\n"
+                    full_content += f"   **Event**: {event.get('event', 'No description')}\n"
+                    full_content += f"   **Confidence**: {confidence}% | **Source**: {event.get('source', 'Unknown')}\n\n"
             
-            # Add gaps and inconsistencies
-            if result.get("gaps") or result.get("inconsistencies"):
-                issues_content = "## Timeline Issues\n\n"
-                
-                if result.get("gaps"):
-                    issues_content += "### Information Gaps\n"
-                    for gap in result["gaps"]:
-                        issues_content += f"- **{gap.get('period', '')}**: {gap.get('description', '')}\n"
-                
-                if result.get("inconsistencies"):
-                    issues_content += "\n### Inconsistencies\n"
-                    for inc in result["inconsistencies"]:
-                        issues_content += f"- **{inc.get('description', '')}**: {inc.get('details', '')}\n"
-                
-                self.add_notebook_cell("markdown", {"content": issues_content})
+            if result.get("key_periods"):
+                full_content += "### ⭐ Key Time Periods\n\n"
+                for period in result["key_periods"]:
+                    full_content += f"**{period.get('start', '')} → {period.get('end', '')}**\n"
+                    full_content += f"   {period.get('significance', '')}\n\n"
+            
+            if result.get("gaps"):
+                full_content += "### ❓ Information Gaps\n\n"
+                for gap in result["gaps"]:
+                    full_content += f"**Period**: {gap.get('period', '')}\n"
+                    full_content += f"**Gap**: {gap.get('description', '')}\n\n"
+            
+            if result.get("inconsistencies"):
+                full_content += "### ⚠️ Timeline Inconsistencies\n\n"
+                for inc in result["inconsistencies"]:
+                    full_content += f"**Issue**: {inc.get('description', '')}\n"
+                    full_content += f"**Details**: {inc.get('details', '')}\n\n"
+            
+            # Add single comprehensive cell
+            self.add_notebook_cell("markdown", {"content": full_content})
             
             self.update_progress(1.0, "Timeline reconstruction complete")
             
@@ -256,34 +268,61 @@ EVIDENCE:
             
             self.outputs["entity_map"] = result
             
-            # Create notebook cells
-            self.add_notebook_cell("markdown", {
-                "content": "# Entity Relationship Analysis\n\nMapping of entities and their connections in the case."
-            })
+            # Create comprehensive entity relationship analysis
+            full_content = "## Entity Relationship Analysis\n\n**Analysis**: Network mapping of entities and their connections in the investigation.\n\n"
             
-            # Entities summary
             if result.get("entities"):
-                entities_content = "## Identified Entities\n\n"
+                full_content += "### 👥 Identified Entities\n\n"
                 for entity_type, entities in result["entities"].items():
                     if entities:
-                        entities_content += f"### {entity_type.title()}\n"
+                        type_emoji = {"people": "👤", "organizations": "🏢", "locations": "📍", "assets": "💰"}.get(entity_type, "📋")
+                        full_content += f"**{type_emoji} {entity_type.title()}**\n"
                         for entity in entities:
-                            entities_content += f"- **{entity.get('name', 'Unknown')}** ({entity.get('type', 'unknown')})\n"
-                
-                self.add_notebook_cell("markdown", {"content": entities_content})
+                            name = entity.get('name', 'Unknown')
+                            entity_type_detail = entity.get('type', 'unknown')
+                            role = entity.get('role', '')
+                            full_content += f"• **{name}** ({entity_type_detail})"
+                            if role:
+                                full_content += f" - {role}"
+                            full_content += "\n"
+                        full_content += "\n"
             
-            # Relationships
             if result.get("relationships"):
-                rel_content = "## Key Relationships\n\n"
+                full_content += "### 🔗 Key Relationships\n\n"
                 for rel in result["relationships"]:
-                    rel_content += f"- **{rel.get('from', '')}** → **{rel.get('to', '')}**\n"
-                    rel_content += f"  - Type: {rel.get('type', '')}\n"
-                    rel_content += f"  - Strength: {rel.get('strength', 0)}\n"
-                    if rel.get('suspicious'):
-                        rel_content += f"  - ⚠️ Flagged as suspicious\n"
-                    rel_content += "\n"
-                
-                self.add_notebook_cell("markdown", {"content": rel_content})
+                    from_entity = rel.get('from', '')
+                    to_entity = rel.get('to', '')
+                    rel_type = rel.get('type', '')
+                    strength = rel.get('strength', 0) * 100
+                    suspicious = rel.get('suspicious', False)
+                    
+                    strength_indicator = "🟢" if strength >= 80 else "🟡" if strength >= 60 else "🔴"
+                    suspicious_flag = " ⚠️" if suspicious else ""
+                    
+                    full_content += f"**{from_entity}** → **{to_entity}**{suspicious_flag}\n"
+                    full_content += f"   **Type**: {rel_type} | **Strength**: {strength:.0f}% {strength_indicator}\n\n"
+            
+            if result.get("networks"):
+                full_content += "### 🕸️ Network Analysis\n\n"
+                for network in result["networks"]:
+                    full_content += f"**{network.get('name', 'Unknown Network')}**\n"
+                    full_content += f"   {network.get('description', 'No description')}\n"
+                    entities = network.get('entities', [])
+                    if entities:
+                        full_content += f"   **Members**: {', '.join(entities[:5])}"
+                        if len(entities) > 5:
+                            full_content += f" (+{len(entities)-5} more)"
+                    full_content += "\n\n"
+            
+            if result.get("suspicious_connections"):
+                full_content += "### 🚨 Suspicious Connections\n\n"
+                for conn in result["suspicious_connections"]:
+                    risk_level = conn.get('risk_level', 'unknown').upper()
+                    risk_emoji = {"HIGH": "🔴", "MEDIUM": "🟡", "LOW": "🟢"}.get(risk_level, "⚪")
+                    full_content += f"{risk_emoji} **{risk_level} RISK**: {conn.get('description', 'No description')}\n\n"
+            
+            # Add single comprehensive cell
+            self.add_notebook_cell("markdown", {"content": full_content})
             
             self.update_progress(1.0, "Entity mapping complete")
             
@@ -356,37 +395,71 @@ EVIDENCE:
             
             self.outputs["financial_analysis"] = result
             
-            # Create notebook cells
-            self.add_notebook_cell("markdown", {
-                "content": "# Financial Analysis\n\nForensic analysis of financial transactions and patterns."
-            })
+            # Create comprehensive financial analysis
+            full_content = "## Financial Analysis\n\n**Analysis**: Forensic examination of financial transactions, flows, and anomalies.\n\n"
             
-            # Flow analysis summary
             if result.get("flow_analysis"):
                 flow = result["flow_analysis"]
-                flow_content = f"""## Cash Flow Summary
-
-- **Total Inflow**: ${flow.get('total_inflow', 0):,.2f}
-- **Total Outflow**: ${flow.get('total_outflow', 0):,.2f}
-- **Net Flow**: ${flow.get('net_flow', 0):,.2f}
-
-"""
-                if flow.get("unusual_patterns"):
-                    flow_content += "### Unusual Patterns\n"
-                    for pattern in flow["unusual_patterns"]:
-                        flow_content += f"- {pattern}\n"
+                full_content += "### 💰 Cash Flow Summary\n\n"
                 
-                self.add_notebook_cell("markdown", {"content": flow_content})
+                total_inflow = flow.get('total_inflow', 0)
+                total_outflow = flow.get('total_outflow', 0)
+                net_flow = flow.get('net_flow', 0)
+                
+                flow_indicator = "🟢" if net_flow > 0 else "🔴" if net_flow < 0 else "🟡"
+                
+                full_content += f"**Total Inflow**: ${total_inflow:,.2f}\n"
+                full_content += f"**Total Outflow**: ${total_outflow:,.2f}\n"
+                full_content += f"**Net Flow**: ${net_flow:,.2f} {flow_indicator}\n\n"
+                
+                if flow.get("unusual_patterns"):
+                    full_content += "**⚠️ Unusual Patterns Detected:**\n"
+                    for pattern in flow["unusual_patterns"]:
+                        full_content += f"• {pattern}\n"
+                    full_content += "\n"
             
-            # Risk indicators
+            if result.get("transactions"):
+                high_risk_txns = [tx for tx in result["transactions"] if tx.get('risk_score', 0) >= 0.7]
+                if high_risk_txns:
+                    full_content += "### 🚨 High-Risk Transactions\n\n"
+                    for tx in high_risk_txns[:10]:  # Limit to top 10
+                        amount = tx.get('amount', 0)
+                        date = tx.get('date', 'Unknown')
+                        risk_score = tx.get('risk_score', 0) * 100
+                        flags = tx.get('flags', [])
+                        
+                        full_content += f"**${amount:,.2f}** on `{date}` (Risk: {risk_score:.0f}%)\n"
+                        if flags:
+                            full_content += f"   🚩 Flags: {', '.join(flags)}\n"
+                        full_content += "\n"
+            
             if result.get("risk_indicators"):
-                risk_content = "## Risk Indicators\n\n"
+                full_content += "### 🔍 Risk Indicators\n\n"
                 for indicator in result["risk_indicators"]:
                     risk_level = indicator.get('risk', 'unknown').upper()
-                    risk_content += f"- **{indicator.get('indicator', '')}** ({risk_level})\n"
-                    risk_content += f"  - {indicator.get('description', '')}\n"
-                
-                self.add_notebook_cell("markdown", {"content": risk_content})
+                    risk_emoji = {"HIGH": "🔴", "MEDIUM": "🟡", "LOW": "🟢"}.get(risk_level, "⚪")
+                    
+                    full_content += f"{risk_emoji} **{indicator.get('indicator', 'Unknown')}** ({risk_level})\n"
+                    full_content += f"   {indicator.get('description', 'No description')}\n\n"
+            
+            if result.get("money_laundering_indicators"):
+                full_content += "### 💵 Money Laundering Indicators\n\n"
+                for ml in result["money_laundering_indicators"]:
+                    confidence = ml.get('confidence', 0) * 100
+                    confidence_indicator = "🟢" if confidence >= 75 else "🟡" if confidence >= 50 else "🔴"
+                    
+                    full_content += f"**{ml.get('pattern', 'Unknown Pattern')}** {confidence_indicator}\n"
+                    full_content += f"   **Confidence**: {confidence:.0f}%\n"
+                    full_content += f"   **Details**: {ml.get('description', 'No details')}\n\n"
+            
+            if result.get("recommendations"):
+                full_content += "### 📝 Recommendations\n\n"
+                for rec in result["recommendations"]:
+                    full_content += f"• {rec}\n"
+                full_content += "\n"
+            
+            # Add single comprehensive cell
+            self.add_notebook_cell("markdown", {"content": full_content})
             
             self.update_progress(1.0, "Financial analysis complete")
             
@@ -456,29 +529,74 @@ EVIDENCE:
             
             self.outputs["communication_analysis"] = result
             
-            # Create notebook cells
-            self.add_notebook_cell("markdown", {
-                "content": "# Communication Analysis\n\nAnalysis of communication patterns, sentiment, and deception indicators."
-            })
+            # Create comprehensive communication analysis
+            full_content = "## Communication Analysis\n\n**Analysis**: Deep examination of communication patterns, sentiment trends, and deception indicators.\n\n"
             
-            # Key communications
             if result.get("key_communications"):
-                comm_content = "## Critical Communications\n\n"
+                full_content += "### 💬 Critical Communications\n\n"
                 for comm in result["key_communications"]:
                     importance = comm.get('importance', 'medium').upper()
-                    comm_content += f"**{comm.get('date', '')}** - {', '.join(comm.get('participants', []))} ({importance})\n"
-                    comm_content += f"- {comm.get('summary', '')}\n\n"
-                
-                self.add_notebook_cell("markdown", {"content": comm_content})
+                    importance_emoji = {"HIGH": "🔴", "MEDIUM": "🟡", "LOW": "🟢"}.get(importance, "⚪")
+                    
+                    date = comm.get('date', 'Unknown date')
+                    participants = ', '.join(comm.get('participants', []))
+                    summary = comm.get('summary', 'No summary')
+                    
+                    full_content += f"{importance_emoji} **{date}** - {participants} ({importance})\n"
+                    full_content += f"   {summary}\n\n"
             
-            # Deception indicators
+            if result.get("sentiment_analysis"):
+                full_content += "### 📊 Sentiment Analysis\n\n"
+                for sentiment in result["sentiment_analysis"]:
+                    period = sentiment.get('period', 'Unknown period')
+                    trend = sentiment.get('trend', 'unknown')
+                    trend_emoji = {"positive": "🟢", "negative": "🔴", "neutral": "🟡"}.get(trend, "⚪")
+                    
+                    full_content += f"**{period}** {trend_emoji}\n"
+                    full_content += f"   **Trend**: {trend.title()}\n"
+                    key_events = sentiment.get('key_events', [])
+                    if key_events:
+                        full_content += f"   **Key Events**: {', '.join(key_events)}\n"
+                    full_content += "\n"
+            
             if result.get("deception_indicators"):
-                deception_content = "## Deception Indicators\n\n"
+                full_content += "### 🔍 Deception Indicators\n\n"
                 for indicator in result["deception_indicators"]:
-                    deception_content += f"- **Message {indicator.get('message_id', '')}** (Confidence: {indicator.get('confidence', 0)*100:.0f}%)\n"
-                    deception_content += f"  - Indicators: {', '.join(indicator.get('indicators', []))}\n"
-                
-                self.add_notebook_cell("markdown", {"content": deception_content})
+                    message_id = indicator.get('message_id', 'Unknown')
+                    confidence = indicator.get('confidence', 0) * 100
+                    confidence_indicator = "🟢" if confidence >= 75 else "🟡" if confidence >= 50 else "🔴"
+                    indicators = indicator.get('indicators', [])
+                    
+                    full_content += f"**Message {message_id}** {confidence_indicator}\n"
+                    full_content += f"   **Confidence**: {confidence:.0f}%\n"
+                    if indicators:
+                        full_content += f"   **Indicators**: {', '.join(indicators)}\n"
+                    full_content += "\n"
+            
+            if result.get("code_words"):
+                full_content += "### 🔑 Suspected Code Words\n\n"
+                for code_word in result["code_words"]:
+                    word = code_word.get('word', 'Unknown')
+                    meaning = code_word.get('likely_meaning', 'Unknown meaning')
+                    frequency = code_word.get('frequency', 0)
+                    
+                    full_content += f"**\"{word}\"** → *{meaning}* (Used {frequency} times)\n"
+                full_content += "\n"
+            
+            if result.get("communication_network"):
+                full_content += "### 🕸️ Communication Network\n\n"
+                for conn in result["communication_network"]:
+                    from_person = conn.get('from', 'Unknown')
+                    to_person = conn.get('to', 'Unknown')
+                    frequency = conn.get('frequency', 0)
+                    urgency = conn.get('urgency', 'unknown').upper()
+                    urgency_emoji = {"HIGH": "🔴", "MEDIUM": "🟡", "LOW": "🟢"}.get(urgency, "⚪")
+                    
+                    full_content += f"**{from_person}** → **{to_person}** {urgency_emoji}\n"
+                    full_content += f"   **Frequency**: {frequency} messages | **Urgency**: {urgency}\n\n"
+            
+            # Add single comprehensive cell
+            self.add_notebook_cell("markdown", {"content": full_content})
             
             self.update_progress(1.0, "Communication analysis complete")
             
@@ -551,44 +669,85 @@ EVIDENCE:
             
             self.outputs["validation_report"] = result
             
-            # Create notebook cells
-            self.add_notebook_cell("markdown", {
-                "content": "# Evidence Validation Report\n\nAssessment of evidence reliability, consistency, and integrity."
-            })
+            # Create comprehensive evidence validation report
+            full_content = "## Evidence Validation Report\n\n**Analysis**: Cross-reference validation of evidence integrity, reliability, and authenticity.\n\n"
             
-            # Overall assessment
             if result.get("reliability_assessment"):
                 assessment = result["reliability_assessment"]
-                assessment_content = f"""## Overall Reliability Assessment
-
-**Overall Score**: {assessment.get('overall_score', 0)*100:.1f}%
-
-- High Reliability: {assessment.get('high_reliability_count', 0)} items
-- Medium Reliability: {assessment.get('medium_reliability_count', 0)} items  
-- Low Reliability: {assessment.get('low_reliability_count', 0)} items
-"""
-                self.add_notebook_cell("markdown", {"content": assessment_content})
+                overall_score = assessment.get('overall_score', 0) * 100
+                score_indicator = "🟢" if overall_score >= 80 else "🟡" if overall_score >= 60 else "🔴"
+                
+                high_count = assessment.get('high_reliability_count', 0)
+                medium_count = assessment.get('medium_reliability_count', 0)
+                low_count = assessment.get('low_reliability_count', 0)
+                
+                full_content += f"### 📉 Overall Reliability Assessment\n\n"
+                full_content += f"**Overall Score**: {overall_score:.1f}% {score_indicator}\n\n"
+                full_content += f"🟢 **High Reliability**: {high_count} items\n"
+                full_content += f"🟡 **Medium Reliability**: {medium_count} items\n"
+                full_content += f"🔴 **Low Reliability**: {low_count} items\n\n"
             
-            # Contradictions
+            if result.get("evidence_items"):
+                high_cred_items = [item for item in result["evidence_items"] if item.get('credibility_score', 0) >= 0.8]
+                low_cred_items = [item for item in result["evidence_items"] if item.get('credibility_score', 0) < 0.6]
+                
+                if high_cred_items:
+                    full_content += "### ✅ High-Credibility Evidence\n\n"
+                    for item in high_cred_items[:5]:  # Top 5
+                        score = item.get('credibility_score', 0) * 100
+                        full_content += f"**{item.get('id', 'Unknown')}** ({item.get('type', 'unknown')}) - {score:.0f}%\n"
+                    full_content += "\n"
+                
+                if low_cred_items:
+                    full_content += "### ⚠️ Low-Credibility Evidence\n\n"
+                    for item in low_cred_items[:5]:  # Top 5 problematic
+                        score = item.get('credibility_score', 0) * 100
+                        issues = item.get('issues', [])
+                        full_content += f"**{item.get('id', 'Unknown')}** ({item.get('type', 'unknown')}) - {score:.0f}%\n"
+                        if issues:
+                            full_content += f"   🚩 Issues: {', '.join(issues)}\n"
+                        full_content += "\n"
+            
             if result.get("contradictions"):
-                contradiction_content = "## Evidence Contradictions\n\n"
+                full_content += "### ⚔️ Evidence Contradictions\n\n"
                 for contradiction in result["contradictions"]:
                     severity = contradiction.get('severity', 'unknown').upper()
-                    contradiction_content += f"**{severity} SEVERITY**\n"
-                    contradiction_content += f"- Items: {', '.join(contradiction.get('items', []))}\n"
-                    contradiction_content += f"- Issue: {contradiction.get('description', '')}\n\n"
-                
-                self.add_notebook_cell("markdown", {"content": contradiction_content})
+                    severity_emoji = {"HIGH": "🔴", "MEDIUM": "🟡", "LOW": "🟢"}.get(severity, "⚪")
+                    items = ', '.join(contradiction.get('items', []))
+                    description = contradiction.get('description', 'No description')
+                    
+                    full_content += f"{severity_emoji} **{severity} SEVERITY**\n"
+                    full_content += f"   **Items**: {items}\n"
+                    full_content += f"   **Issue**: {description}\n\n"
             
-            # Tampering indicators
+            if result.get("corroborations"):
+                full_content += "### 🤝 Evidence Corroborations\n\n"
+                for corr in result["corroborations"]:
+                    strength = corr.get('strength', 'unknown').upper()
+                    strength_emoji = {"STRONG": "🟢", "MEDIUM": "🟡", "WEAK": "🔴"}.get(strength, "⚪")
+                    items = ', '.join(corr.get('items', []))
+                    description = corr.get('description', 'No description')
+                    
+                    full_content += f"{strength_emoji} **{strength} CORROBORATION**\n"
+                    full_content += f"   **Items**: {items}\n"
+                    full_content += f"   **Details**: {description}\n\n"
+            
             if result.get("tampering_indicators"):
-                tampering_content = "## Potential Tampering Indicators\n\n"
+                full_content += "### 🛡️ Potential Tampering Indicators\n\n"
                 for indicator in result["tampering_indicators"]:
+                    evidence_id = indicator.get('evidence_id', 'Unknown')
                     likelihood = indicator.get('likelihood', 0) * 100
-                    tampering_content += f"- **Evidence {indicator.get('evidence_id', '')}** (Likelihood: {likelihood:.0f}%)\n"
-                    tampering_content += f"  - Indicators: {', '.join(indicator.get('indicators', []))}\n"
-                
-                self.add_notebook_cell("markdown", {"content": tampering_content})
+                    likelihood_indicator = "🔴" if likelihood >= 70 else "🟡" if likelihood >= 40 else "🟢"
+                    indicators = indicator.get('indicators', [])
+                    
+                    full_content += f"**Evidence {evidence_id}** {likelihood_indicator}\n"
+                    full_content += f"   **Tampering Likelihood**: {likelihood:.0f}%\n"
+                    if indicators:
+                        full_content += f"   **Indicators**: {', '.join(indicators)}\n"
+                    full_content += "\n"
+            
+            # Add single comprehensive cell
+            self.add_notebook_cell("markdown", {"content": full_content})
             
             self.update_progress(1.0, "Evidence validation complete")
             
