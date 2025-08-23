@@ -212,7 +212,6 @@ async def chat_stream(request: ChatRequest):
                     # Check if this chunk has content
                     if delta.content:
                         accumulated += delta.content
-                        print(f"Streaming content: {delta.content}")
                         yield f"data: {json.dumps({'type': 'content', 'content': delta.content})}\n\n"
                     
                     # Check if streaming is finished
