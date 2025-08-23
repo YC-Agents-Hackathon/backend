@@ -40,11 +40,31 @@ class Message(BaseModel):
 
 class UploadRequest(BaseModel):
     evidence: List[str]
+    notebookId: Optional[str] = None
 
 
 class UploadResponse(BaseModel):
     totalEvidenceCount: int
     message: str
+
+
+class CaseFileUpload(BaseModel):
+    filename: str
+    content: str
+    file_size: int
+
+
+class CaseUploadRequest(BaseModel):
+    case_id: str
+    files: List[CaseFileUpload]
+
+
+class CaseUploadResponse(BaseModel):
+    success_count: int
+    total_count: int
+    failed_files: List[str]
+    message: str
+    case_id: str
 
 
 class ChatRequest(BaseModel):
@@ -206,6 +226,61 @@ async def upload_evidence(request: UploadRequest):
         totalEvidenceCount=len(global_evidence),
         message=f"Successfully uploaded {len(request.evidence)} evidence items to global storage"
     )
+
+
+@app.post("/api/upload-case-files", response_model=CaseUploadResponse)
+async def upload_case_files(request: CaseUploadRequest):
+    """Simplified case-level file upload endpoint"""
+    global global_evidence
+    
+    success_count = 0
+    failed_files = []
+    case_id = request.case_id
+    
+    try:
+        print(f"Processing {len(request.files)} files for case {case_id}")
+        
+        for file_item in request.files:
+            try:
+                # Store file content with case context
+                evidence_entry = f"=== CASE: {case_id} | FILE: {file_item.filename} | SIZE: {file_item.file_size} bytes ===\n{file_item.content}\n=== END FILE ===\n"
+                global_evidence.append(evidence_entry)
+                success_count += 1
+                print(f"✓ Successfully processed: {file_item.filename} ({file_item.file_size} bytes)")
+                
+            except Exception as e:
+                error_msg = f"{file_item.filename}: {str(e)}"
+                failed_files.append(error_msg)
+                print(f"✗ Failed to process {file_item.filename}: {str(e)}")
+        
+        total_count = len(request.files)
+        message = f"Case {case_id}: Processed {success_count}/{total_count} files. Total evidence: {len(global_evidence)} items"
+        
+        print(f"Upload complete: {message}")
+        
+        return CaseUploadResponse(
+            success_count=success_count,
+            total_count=total_count,
+            failed_files=failed_files,
+            message=message,
+            case_id=case_id
+        )
+        
+    except Exception as e:
+        error_msg = f"Case file upload failed for case {case_id}: {str(e)}"
+        print(f"ERROR: {error_msg}")
+        raise HTTPException(status_code=500, detail=error_msg)
+
+
+@app.get("/api/health")
+async def health_check():
+    """Health check endpoint to verify backend connectivity"""
+    return {
+        "status": "healthy",
+        "message": "Backend is running",
+        "evidence_count": len(global_evidence),
+        "timestamp": int(time.time())
+    }
 
 
 @app.post("/api/chat", response_model=ChatResponse)
