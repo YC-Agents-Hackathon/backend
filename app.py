@@ -45,11 +45,6 @@ class ChatResponse(BaseModel):
     response: str
 
 
-class ReportRequest(BaseModel):
-    notebookId: str
-    task: Optional[str] = None
-
-
 class ReportResponse(BaseModel):
     report: str
 
@@ -218,27 +213,37 @@ async def chat_stream(request: ChatRequest):
 
 
 @app.post("/api/report", response_model=ReportResponse)
-async def generate_report(request: ReportRequest):
+async def generate_report():
     if not runner:
         raise HTTPException(status_code=500, detail="Client not ready")
 
-    notebook = get_notebook(request.notebookId)
-
-    # Build report context
+    # Build report context with ALL conversations from all notebooks
     context_parts = [REPORT_PROMPT]
-    if notebook.evidence:
-        context_parts.append("\nEVIDENCE:\n" + "\n".join(notebook.evidence))
+    
+    # Find the first notebook with evidence and use it
+    evidence_used = False
+    for notebook_id, notebook in notebooks.items():
+        if notebook.evidence and not evidence_used:
+            context_parts.append("\nEVIDENCE:\n" + "\n".join(notebook.evidence))
+            evidence_used = True
+            break
+    
+    # Add ALL conversations from ALL notebooks as context
+    all_conversations = []
+    for notebook_id, notebook in notebooks.items():
+        if notebook.messages:
+            all_conversations.append(f"\n--- Conversation from Notebook {notebook_id} ---")
+            for msg in notebook.messages:
+                role = "User" if msg.role == "user" else "Assistant"
+                all_conversations.append(f"{role}: {msg.content}")
+    
+    if all_conversations:
+        context_parts.append("\nALL CONVERSATION HISTORY:")
+        context_parts.extend(all_conversations)
 
-    if notebook.messages:
-        context_parts.append("\nCONVERSATION HISTORY:")
-        for msg in notebook.messages:  # All messages
-            role = "User" if msg.role == "user" else "Assistant"
-            context_parts.append(f"{role}: {msg.content}")
-
-    if request.task:
-        context_parts.append(f"\nTASK: {request.task}")
-
-    context_parts.append("\nGenerate a comprehensive detective report.")
+    context_parts.append(
+        "\nGenerate a comprehensive detective report and solve the case."
+    )
     context = "\n\n".join(context_parts)
 
     try:
