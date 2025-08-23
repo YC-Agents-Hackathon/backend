@@ -10,7 +10,7 @@ import tempfile
 import os
 import sys
 from contextlib import asynccontextmanager
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Any
 
 from dedalus_labs import AsyncDedalus, DedalusRunner
 from dedalus_labs.utils.streaming import stream_async
@@ -105,6 +105,7 @@ class MultiAgentAnalysisResponse(BaseModel):
     message: str
     agent_count: int
     websocket_url: str
+    notebook_data: Optional[List[Dict[str, Any]]] = None
 
 
 # In-Memory Storage
@@ -449,10 +450,26 @@ async def start_multi_agent_analysis(request: MultiAgentAnalysisRequest):
         )
     
     try:
-        # Determine evidence source
-        if request.case_id:
-            # Get evidence from Supabase for the specific case
-            print(f"Retrieving evidence for case: {request.case_id}")
+        # Determine evidence source - prioritize provided evidence over case_id lookup
+        if request.evidence and len(request.evidence) > 0:
+            # Use provided evidence directly (sent from frontend)
+            evidence = request.evidence
+            print(f"Using provided evidence: {len(evidence)} items")
+            
+            # Get case information for context if case_id is provided
+            if request.case_id:
+                case_info = await supabase_client.get_case_info(request.case_id)
+                if case_info:
+                    case_context = f"Case: {case_info.get('title', 'Unknown')} - {case_info.get('description', 'No description')}"
+                else:
+                    case_context = f"Case ID: {request.case_id} (details not found in database)"
+                    print(f"Warning: Case {request.case_id} not found in database, proceeding with analysis")
+            else:
+                case_context = ""
+            
+        elif request.case_id:
+            # Fallback: Get evidence from Supabase for the specific case
+            print(f"No evidence provided, retrieving from Supabase for case: {request.case_id}")
             evidence_files = await supabase_client.get_case_evidence(request.case_id)
             
             if not evidence_files:
@@ -471,8 +488,8 @@ async def start_multi_agent_analysis(request: MultiAgentAnalysisRequest):
             print(f"Retrieved {len(evidence_files)} evidence files from case {request.case_id}")
             
         else:
-            # Fallback to provided evidence or global evidence
-            evidence = request.evidence if request.evidence else global_evidence
+            # Last resort: use global evidence
+            evidence = global_evidence
             case_context = ""
             
             if not evidence:
@@ -521,13 +538,51 @@ async def start_multi_agent_analysis(request: MultiAgentAnalysisRequest):
             progress_callback=progress_callback
         )
         
-        return MultiAgentAnalysisResponse(
-            run_id=run_id,
-            status=multi_agent_run.status.value,
-            message=f"Started analysis with {len(request.agent_types)} agents for {len(evidence)} evidence items",
-            agent_count=len(request.agent_types),
-            websocket_url=f"/ws/multi-agent/{run_id}"
-        )
+        # Wait for analysis to complete if create_notebook is true
+        if request.create_notebook:
+            # Wait a bit for agents to start, then poll for completion
+            await asyncio.sleep(1)  # Let agents start
+            
+            max_wait_time = 120  # 2 minutes max
+            check_interval = 2   # Check every 2 seconds
+            waited = 0
+            
+            while waited < max_wait_time:
+                current_run = global_orchestrator.get_run_status(run_id)
+                if current_run and current_run.status in [OrchestrationStatus.COMPLETED, OrchestrationStatus.FAILED]:
+                    break
+                await asyncio.sleep(check_interval)
+                waited += check_interval
+            
+            # Get final results
+            final_run = global_orchestrator.get_run_status(run_id)
+            if final_run and final_run.status == OrchestrationStatus.COMPLETED:
+                notebook_cells = final_run.get_all_notebook_cells()
+                return MultiAgentAnalysisResponse(
+                    run_id=run_id,
+                    status=final_run.status.value,
+                    message=f"Completed analysis with {len(request.agent_types)} agents",
+                    agent_count=len(request.agent_types),
+                    websocket_url=f"/ws/multi-agent/{run_id}",
+                    notebook_data=notebook_cells
+                )
+            else:
+                # Analysis didn't complete in time or failed
+                return MultiAgentAnalysisResponse(
+                    run_id=run_id,
+                    status=final_run.status.value if final_run else "timeout",
+                    message=f"Analysis status: {final_run.status.value if final_run else 'timeout'}",
+                    agent_count=len(request.agent_types),
+                    websocket_url=f"/ws/multi-agent/{run_id}"
+                )
+        else:
+            return MultiAgentAnalysisResponse(
+                run_id=run_id,
+                status=multi_agent_run.status.value,
+                message=f"Started analysis with {len(request.agent_types)} agents for {len(evidence)} evidence items",
+                agent_count=len(request.agent_types),
+                websocket_url=f"/ws/multi-agent/{run_id}"
+            )
         
     except Exception as e:
         print(f"Error starting multi-agent analysis: {e}")

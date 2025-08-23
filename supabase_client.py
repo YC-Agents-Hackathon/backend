@@ -32,8 +32,12 @@ class SupabaseEvidenceClient:
     async def get_case_info(self, case_id: str) -> Optional[Dict[str, Any]]:
         """Get case information"""
         try:
-            response = self.supabase.table("cases").select("*").eq("id", case_id).single().execute()
-            return response.data
+            response = self.supabase.table("cases").select("*").eq("id", case_id).execute()
+            if response.data and len(response.data) > 0:
+                return response.data[0]
+            else:
+                print(f"No case found with id: {case_id}")
+                return None
         except Exception as e:
             print(f"Error fetching case info: {e}")
             return None

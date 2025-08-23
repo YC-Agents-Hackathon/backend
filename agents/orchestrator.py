@@ -268,20 +268,21 @@ Each agent focused on a specific aspect of the investigation.
                     "content": {
                         "content": f"""---
 
-# {agent.agent_name}
+# {getattr(agent, 'agent_name', 'Unknown Agent')}
 
-**Agent Type**: {agent.agent_type}
+**Agent Type**: {getattr(agent, 'agent_type', 'unknown')}
 **Status**: {agent.status.value.upper()}
-**Execution Time**: {agent.execution_time:.2f if agent.execution_time else 'Unknown'}s
+**Execution Time**: {f"{agent.execution_time:.2f}s" if agent.execution_time and isinstance(agent.execution_time, (int, float)) else "Unknown"}
 
-{agent.agent_description}
+{getattr(agent, 'agent_description', 'No description available')}
 """
                     },
                     "created_at": datetime.utcnow().isoformat()
                 })
                 
-                # Add agent's notebook cells
-                all_cells.extend(agent.notebook_cells)
+                # Add agent's notebook cells if they exist
+                if hasattr(agent, 'notebook_cells') and agent.notebook_cells:
+                    all_cells.extend(agent.notebook_cells)
         
         return all_cells
 
