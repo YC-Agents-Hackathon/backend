@@ -32,7 +32,7 @@ from supabase_client import SupabaseEvidenceClient
 load_dotenv()
 
 MODEL = "openai/gpt-4.1"
-
+PERPLEXITY_MCP_SERVER = "akakak/sonar"
 
 # Data Models
 class Message(BaseModel):
@@ -429,7 +429,6 @@ async def get_evidence():
 async def upload_evidence(request: UploadRequest):
     global global_evidence
     global_evidence.extend(request.evidence)
-    save_evidence()  # Save to file immediately
     print(f"Uploaded evidence to global storage: {len(global_evidence)} total items")
     print(f"Latest evidence: {request.evidence}")
     return UploadResponse(
