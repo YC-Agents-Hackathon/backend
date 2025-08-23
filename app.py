@@ -12,6 +12,7 @@ import sys
 from contextlib import asynccontextmanager
 from typing import Dict, List, Optional, Set, Any
 from pathlib import Path
+import re
 
 from dedalus_labs import AsyncDedalus, DedalusRunner
 from dedalus_labs.utils.streaming import stream_async
@@ -154,6 +155,129 @@ class ConnectionManager:
 
 websocket_manager = ConnectionManager()
 
+# Tool Functions
+def analyze_social_connections(context_text: str) -> str:
+    """
+    Analyze social connections between people mentioned in the context text.
+    Uses AI to identify relationships and generates networkx graph code.
+    """
+    global runner
+    
+    if not runner:
+        return "Error: AI client not available"
+    
+    analysis_prompt = f"""
+    Analyze the following text and identify all people mentioned and their relationships:
+
+    TEXT TO ANALYZE:
+    {context_text}
+
+    INSTRUCTIONS:
+    1. Extract ALL person names mentioned (including nicknames, titles, etc.)
+    2. Determine relationships between people based on the evidence
+    3. Classify relationship types (e.g., colleagues, family, friends, business partners, suspects, witnesses, enemies)
+    4. Determine relationship strength: Strong, Medium, Weak
+    5. Note any directional relationships (A knows B, but B might not know A)
+
+    CRITICAL REQUIREMENTS:
+    1. You MUST return actual executable Python code, not references or descriptions
+    2. The code must be complete and runnable
+    3. Use the exact format below with all the people and relationships from the evidence
+    4. Replace placeholder names with actual people from the analysis
+    
+         OUTPUT FORMAT - Return the complete Python code in a code block:
+     ```python
+     import networkx as nx
+     import matplotlib.pyplot as plt
+     import io
+     import base64
+     
+     # Create graph
+    G = nx.Graph()  # Use nx.DiGraph() for directed relationships
+    
+    # Add nodes (people) - REPLACE WITH ACTUAL PEOPLE FROM ANALYSIS
+    G.add_node("Person Name", role="suspect/witness/victim/other")
+    
+    # Add edges (relationships) - REPLACE WITH ACTUAL RELATIONSHIPS FROM ANALYSIS
+    G.add_edge("Person A", "Person B", relationship="colleague", strength="Strong", details="Works together at OpenAI")
+    
+    # Create visualization
+    plt.figure(figsize=(12, 8))
+    pos = nx.spring_layout(G, k=2, iterations=50)
+    
+    # Draw nodes with colors based on roles
+    node_colors = {{'suspect': 'red', 'witness': 'blue', 'victim': 'green', 'other': 'gray'}}
+    colors = [node_colors.get(G.nodes[node].get('role', 'other'), 'gray') for node in G.nodes()]
+    
+    nx.draw_networkx_nodes(G, pos, node_color=colors, node_size=1000, alpha=0.7)
+    nx.draw_networkx_labels(G, pos, font_size=8, font_weight='bold')
+    
+    # Draw edges with varying thickness based on strength
+    edge_weights = {{'Strong': 3, 'Medium': 2, 'Weak': 1}}
+    for edge in G.edges(data=True):
+        strength = edge[2].get('strength', 'Medium')
+        nx.draw_networkx_edges(G, pos, edgelist=[(edge[0], edge[1])], 
+                              width=edge_weights.get(strength, 2), alpha=0.6)
+    
+    # Add edge labels
+    edge_labels = {{(u, v): d.get('relationship', '') for u, v, d in G.edges(data=True)}}
+    nx.draw_networkx_edge_labels(G, pos, edge_labels, font_size=6)
+    
+         plt.title("Social Network Analysis - Investigation Connections")
+     plt.axis('off')
+     plt.tight_layout()
+     
+     # Save plot to file and display it
+     import os
+     from datetime import datetime
+     
+     # Create a filename with timestamp
+     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+     filename = f"network_graph_{timestamp}.png"
+     
+     # Save the plot
+     plt.savefig(filename, dpi=150, bbox_inches='tight')
+     print(f"Network graph saved as: {filename}")
+     
+     # Show the plot (this will open in a popup window)
+     plt.show()
+     
+     # Print summary
+     print(f"\\nNetwork Analysis Summary:")
+     print(f"Total people: {{len(G.nodes())}}")
+     print(f"Total connections: {{len(G.edges())}}")
+     print("\\nKey relationships:")
+     for edge in G.edges(data=True):
+         print(f"- {{edge[0]}} → {{edge[1]}}: {{edge[2].get('relationship', 'Unknown')}} ({{edge[2].get('strength', 'Medium')}})")
+     ```
+    
+    CRITICAL: You must provide the complete executable code with actual names and relationships, not placeholders or references.
+    """
+    
+    try:
+        # Use OpenAI to analyze relationships synchronously 
+        import asyncio
+        
+        async def get_analysis():
+            response = await runner.run(
+                input=analysis_prompt, 
+                model="openai/gpt-4.1"
+            )
+            return response.final_output
+        
+        # Run the analysis
+        result = asyncio.run(get_analysis())
+        
+        # Extract just the Python code from the response
+        code_match = re.search(r'```python\n(.*?)\n```', result, re.DOTALL)
+        if code_match:
+            return code_match.group(1)
+        else:
+            return result  # Return as-is if no code block found
+            
+    except Exception as e:
+        return f"Error analyzing social connections: {str(e)}"
+
 # System Prompts
 INVESTIGATOR_PROMPT = """
 You are an elite detective AI with expertise in criminal investigation, forensic analysis, and case management. You serve as an interactive analysis copilot for ongoing investigations.
@@ -164,6 +288,7 @@ PRIMARY RESPONSIBILITIES:
 - Generate actionable investigative leads and hypotheses
 - Answer specific questions about suspects, timelines, locations, and evidence
 - Cross-reference information across multiple evidence sources
+- Create social network analysis graphs to visualize relationships between people
 
 ANALYSIS APPROACH:
 - Start with the provided evidence as your foundation
@@ -184,9 +309,14 @@ EVIDENCE ANALYSIS PRIORITIES:
 1. Timeline reconstruction and sequence of events
 2. Suspect identification and behavioral analysis  
 3. Location analysis and geographical patterns
-4. Communication patterns and relationship mapping
+4. Communication patterns and relationship mapping (use analyze_social_connections for complex networks)
 5. Financial transactions and resource tracking
 6. Digital footprints and technological evidence
+
+TOOL USAGE:
+- Use analyze_social_connections when asked about relationships, connections, networks, or social analysis
+- The tool will generate Python networkx code to visualize person-to-person relationships
+- Particularly useful for complex cases with multiple suspects, witnesses, and interconnected people
 """
 
 REPORT_PROMPT = """
@@ -384,7 +514,12 @@ async def chat(request: ChatRequest):
     context = "\n\n".join(context_parts)
 
     try:
-        response = await runner.run(input=context, model=MODEL, mcp_servers=[PERPLEXITY_MCP_SERVER])
+        response = await runner.run(
+            input=context, 
+            model=MODEL, 
+            mcp_servers=[PERPLEXITY_MCP_SERVER],
+            tools=[analyze_social_connections]
+        )
 
         # Store messages
         notebook.messages.append(
@@ -431,8 +566,14 @@ async def chat_stream(request: ChatRequest):
             print(f"Evidence items: {len(global_evidence)}")
             print("="*80 + "\n")
 
-            # Use the correct Dedalus streaming API with MCP servers
-            result = runner.run(input=context, model=MODEL, stream=True, mcp_servers=[PERPLEXITY_MCP_SERVER])
+            # Use the correct Dedalus streaming API with MCP servers and tools
+            result = runner.run(
+                input=context, 
+                model=MODEL, 
+                stream=True, 
+                mcp_servers=[PERPLEXITY_MCP_SERVER],
+                tools=[analyze_social_connections]
+            )
             accumulated = ""
 
             # Stream the response using correct StreamChunk structure
@@ -1009,9 +1150,12 @@ def execute_python_code(code: str) -> tuple[str, str, float]:
     start_time = time.time()
     
     try:
+        # Use the code as-is to allow interactive matplotlib
+        modified_code = code
+        
         # Create a temporary file to execute the code
         with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
-            f.write(code)
+            f.write(modified_code)
             temp_file = f.name
         
         try:
@@ -1047,18 +1191,38 @@ def execute_python_code(code: str) -> tuple[str, str, float]:
 async def execute_code(request: CodeExecutionRequest):
     """Execute code safely with basic security restrictions."""
     
-    # Basic security checks
-    dangerous_imports = [
-        'os', 'subprocess', 'sys', 'shutil', 'glob', 'pickle', 
-        'socket', 'urllib', 'requests', '__import__', 'eval', 'exec'
+    # Basic security checks - look for actual import statements
+    dangerous_patterns = [
+        r'\bimport\s+os\b',
+        r'\bfrom\s+os\b', 
+        r'\bimport\s+subprocess\b',
+        r'\bfrom\s+subprocess\b',
+        r'\bimport\s+sys\b',
+        r'\bfrom\s+sys\b',
+        r'\bimport\s+shutil\b',
+        r'\bfrom\s+shutil\b',
+        r'\bimport\s+glob\b',
+        r'\bfrom\s+glob\b',
+        r'\bimport\s+pickle\b',
+        r'\bfrom\s+pickle\b',
+        r'\bimport\s+socket\b',
+        r'\bfrom\s+socket\b',
+        r'\bimport\s+urllib\b',
+        r'\bfrom\s+urllib\b',
+        r'\bimport\s+requests\b',
+        r'\bfrom\s+requests\b',
+        r'\b__import__\b',
+        r'\beval\s*\(',
+        r'\bexec\s*\('
     ]
     
-    code_lower = request.code.lower()
-    for dangerous in dangerous_imports:
-        if dangerous in code_lower:
+    import re
+    for pattern in dangerous_patterns:
+        if re.search(pattern, request.code, re.IGNORECASE):
+            dangerous_name = pattern.replace(r'\b', '').replace(r'\s+', ' ').replace('import ', '').replace('from ', '').replace('(', '')
             return CodeExecutionResponse(
                 output="",
-                error=f"Security restriction: '{dangerous}' is not allowed",
+                error=f"Security restriction: '{dangerous_name}' is not allowed",
                 execution_time=0.0
             )
     
