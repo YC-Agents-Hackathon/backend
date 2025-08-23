@@ -2,6 +2,7 @@
 Detective LLM Backend - Simplified Implementation
 """
 
+import asyncio
 import json
 import time
 import subprocess
@@ -9,15 +10,21 @@ import tempfile
 import os
 import sys
 from contextlib import asynccontextmanager
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 
 from dedalus_labs import AsyncDedalus, DedalusRunner
 from dedalus_labs.utils.streaming import stream_async
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
+
+# Import our multi-agent system
+from agents.orchestrator import global_orchestrator, OrchestrationStatus
+from agents.detective_agents import AGENT_REGISTRY
+from agents.base_agent import AgentOutput
+from supabase_client import SupabaseEvidenceClient
 
 load_dotenv()
 
@@ -64,6 +71,22 @@ class CodeExecutionResponse(BaseModel):
     execution_time: float
 
 
+class MultiAgentAnalysisRequest(BaseModel):
+    case_id: Optional[str] = None
+    evidence: List[str]
+    agent_types: List[str] = ["pattern_recognition", "timeline_reconstruction", "entity_relationship", "financial_analysis", "communication_analysis", "evidence_validation"]
+    create_notebook: bool = True
+    notebook_title: Optional[str] = "Multi-Agent Analysis"
+
+
+class MultiAgentAnalysisResponse(BaseModel):
+    run_id: str
+    status: str
+    message: str
+    agent_count: int
+    websocket_url: str
+
+
 # In-Memory Storage
 class NotebookState:
     def __init__(self):
@@ -75,6 +98,38 @@ notebooks: Dict[str, NotebookState] = {}
 global_evidence: List[str] = []  # Global evidence storage
 client = None
 runner = None
+supabase_client = None
+
+# WebSocket connection manager
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: Dict[str, Set[WebSocket]] = {}
+    
+    async def connect(self, websocket: WebSocket, run_id: str):
+        await websocket.accept()
+        if run_id not in self.active_connections:
+            self.active_connections[run_id] = set()
+        self.active_connections[run_id].add(websocket)
+    
+    def disconnect(self, websocket: WebSocket, run_id: str):
+        if run_id in self.active_connections:
+            self.active_connections[run_id].discard(websocket)
+            if not self.active_connections[run_id]:
+                del self.active_connections[run_id]
+    
+    async def send_to_run(self, run_id: str, message: dict):
+        if run_id in self.active_connections:
+            disconnected = set()
+            for connection in self.active_connections[run_id]:
+                try:
+                    await connection.send_text(json.dumps(message))
+                except:
+                    disconnected.add(connection)
+            # Remove disconnected connections
+            for conn in disconnected:
+                self.active_connections[run_id].discard(conn)
+
+websocket_manager = ConnectionManager()
 
 # System Prompts
 INVESTIGATOR_PROMPT = """
@@ -96,9 +151,10 @@ Keep under 800 words.
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global client, runner
+    global client, runner, supabase_client
     client = AsyncDedalus()
     runner = DedalusRunner(client)
+    supabase_client = SupabaseEvidenceClient()
     yield
 
 
@@ -303,6 +359,233 @@ async def generate_report():
         )
 
 
+@app.post("/api/multi-agent-analysis", response_model=MultiAgentAnalysisResponse)
+async def start_multi_agent_analysis(request: MultiAgentAnalysisRequest):
+    """Start a multi-agent analysis of the evidence"""
+    if not runner or not supabase_client:
+        raise HTTPException(status_code=500, detail="Client not ready")
+    
+    # Validate agent types
+    invalid_agents = [agent for agent in request.agent_types if agent not in AGENT_REGISTRY]
+    if invalid_agents:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Invalid agent types: {invalid_agents}. Available: {list(AGENT_REGISTRY.keys())}"
+        )
+    
+    try:
+        # Determine evidence source
+        if request.case_id:
+            # Get evidence from Supabase for the specific case
+            print(f"Retrieving evidence for case: {request.case_id}")
+            evidence_files = await supabase_client.get_case_evidence(request.case_id)
+            
+            if not evidence_files:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"No evidence files found for case {request.case_id}. Please upload evidence files first."
+                )
+            
+            # Process evidence files into text suitable for AI analysis
+            evidence = await supabase_client.process_evidence_to_text(evidence_files)
+            
+            # Get case information for context
+            case_info = await supabase_client.get_case_info(request.case_id)
+            case_context = f"Case: {case_info.get('title', 'Unknown')} - {case_info.get('description', 'No description')}" if case_info else ""
+            
+            print(f"Retrieved {len(evidence_files)} evidence files from case {request.case_id}")
+            
+        else:
+            # Fallback to provided evidence or global evidence
+            evidence = request.evidence if request.evidence else global_evidence
+            case_context = ""
+            
+            if not evidence:
+                raise HTTPException(status_code=400, detail="No evidence provided and no case_id specified")
+        
+        # Start multi-agent analysis
+        run_id = f"case_{request.case_id}_{int(time.time())}" if request.case_id else f"run_{int(time.time())}"
+        
+        # Context for agents
+        context = {
+            "runner": runner,
+            "case_id": request.case_id,
+            "case_context": case_context,
+            "create_notebook": request.create_notebook,
+            "notebook_title": request.notebook_title or f"Multi-Agent Analysis - {run_id}",
+            "evidence_count": len(evidence)
+        }
+        
+        # Status callback for real-time updates
+        async def status_callback(agent_output: AgentOutput):
+            await websocket_manager.send_to_run(run_id, {
+                "type": "agent_status",
+                "agent_id": agent_output.agent_id,
+                "agent_type": agent_output.agent_type,
+                "status": agent_output.status.value,
+                "progress": agent_output.progress,
+                "current_step": agent_output.current_step,
+                "error": agent_output.error
+            })
+        
+        # Progress callback for real-time updates  
+        async def progress_callback(agent_output: AgentOutput):
+            await websocket_manager.send_to_run(run_id, {
+                "type": "agent_progress",
+                "agent_id": agent_output.agent_id,
+                "progress": agent_output.progress,
+                "current_step": agent_output.current_step
+            })
+        
+        multi_agent_run = await global_orchestrator.start_multi_agent_analysis(
+            run_id=run_id,
+            evidence=evidence,
+            agent_types=request.agent_types,
+            context=context,
+            status_callback=status_callback,
+            progress_callback=progress_callback
+        )
+        
+        return MultiAgentAnalysisResponse(
+            run_id=run_id,
+            status=multi_agent_run.status.value,
+            message=f"Started analysis with {len(request.agent_types)} agents for {len(evidence)} evidence items",
+            agent_count=len(request.agent_types),
+            websocket_url=f"/ws/multi-agent/{run_id}"
+        )
+        
+    except Exception as e:
+        print(f"Error starting multi-agent analysis: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to start multi-agent analysis: {str(e)}")
+
+
+@app.get("/api/multi-agent-analysis/{run_id}")
+async def get_multi_agent_status(run_id: str):
+    """Get status of a multi-agent analysis run"""
+    run = global_orchestrator.get_run_status(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Analysis run not found")
+    
+    return run.get_summary()
+
+
+@app.get("/api/multi-agent-analysis/{run_id}/notebook")
+async def get_multi_agent_notebook(run_id: str):
+    """Get generated notebook from multi-agent analysis"""
+    run = global_orchestrator.get_run_status(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Analysis run not found")
+    
+    if run.status != OrchestrationStatus.COMPLETED:
+        raise HTTPException(status_code=400, detail="Analysis not yet completed")
+    
+    notebook_cells = run.get_all_notebook_cells()
+    
+    return {
+        "run_id": run_id,
+        "title": f"Multi-Agent Analysis - {run_id}",
+        "cells": notebook_cells,
+        "created_at": run.started_at.isoformat() if run.started_at else None,
+        "completed_at": run.completed_at.isoformat() if run.completed_at else None
+    }
+
+
+@app.get("/api/agent-types")
+async def get_available_agent_types():
+    """Get list of available agent types"""
+    agents_info = []
+    for agent_type, agent_class in AGENT_REGISTRY.items():
+        # Create temporary instance to get metadata
+        temp_agent = agent_class()
+        agents_info.append({
+            "type": agent_type,
+            "name": temp_agent.agent_name,
+            "description": temp_agent.agent_description
+        })
+    
+    return {
+        "agent_types": agents_info,
+        "total_count": len(agents_info)
+    }
+
+
+@app.websocket("/ws/multi-agent/{run_id}")
+async def websocket_endpoint(websocket: WebSocket, run_id: str):
+    """WebSocket endpoint for real-time multi-agent updates"""
+    await websocket_manager.connect(websocket, run_id)
+    
+    try:
+        # Send initial status
+        run = global_orchestrator.get_run_status(run_id)
+        if run:
+            await websocket.send_text(json.dumps({
+                "type": "run_status",
+                "run_id": run_id,
+                "status": run.status.value,
+                "progress": run.progress,
+                "summary": run.get_summary()
+            }))
+        else:
+            await websocket.send_text(json.dumps({
+                "type": "error",
+                "message": "Analysis run not found"
+            }))
+            return
+        
+        # Keep connection alive and send periodic updates
+        while True:
+            try:
+                # Wait for any message from client (keepalive)
+                await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
+            except asyncio.TimeoutError:
+                # Send periodic status updates
+                run = global_orchestrator.get_run_status(run_id)
+                if run:
+                    await websocket.send_text(json.dumps({
+                        "type": "run_status",
+                        "run_id": run_id,
+                        "status": run.status.value,
+                        "progress": run.progress
+                    }))
+                    
+                    # If run is completed, send final update and close
+                    if run.status in [OrchestrationStatus.COMPLETED, OrchestrationStatus.FAILED, OrchestrationStatus.CANCELLED]:
+                        await websocket.send_text(json.dumps({
+                            "type": "run_complete",
+                            "run_id": run_id,
+                            "status": run.status.value,
+                            "summary": run.get_summary()
+                        }))
+                        break
+    
+    except WebSocketDisconnect:
+        pass
+    finally:
+        websocket_manager.disconnect(websocket, run_id)
+
+
+@app.delete("/api/multi-agent-analysis/{run_id}")
+async def cancel_multi_agent_analysis(run_id: str):
+    """Cancel a running multi-agent analysis"""
+    run = global_orchestrator.get_run_status(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Analysis run not found")
+    
+    if run.status not in [OrchestrationStatus.RUNNING, OrchestrationStatus.PENDING]:
+        raise HTTPException(status_code=400, detail="Cannot cancel completed analysis")
+    
+    await global_orchestrator.cancel_run(run_id)
+    
+    # Notify WebSocket clients
+    await websocket_manager.send_to_run(run_id, {
+        "type": "run_cancelled",
+        "run_id": run_id,
+        "message": "Analysis cancelled by user"
+    })
+    
+    return {"message": "Analysis cancelled successfully"}
+
+
 def execute_python_code(code: str) -> tuple[str, str, float]:
     """Execute Python code safely in a temporary file with timeout."""
     start_time = time.time()
@@ -374,6 +657,22 @@ async def execute_code(request: CodeExecutionRequest):
             error=f"Language '{request.language}' is not supported yet. Only Python is currently available.",
             execution_time=0.0
         )
+
+
+# Cleanup task for completed runs
+@app.on_event("startup")
+async def startup_event():
+    # Schedule periodic cleanup of completed runs
+    asyncio.create_task(periodic_cleanup())
+
+async def periodic_cleanup():
+    """Periodically clean up completed runs"""
+    while True:
+        await asyncio.sleep(300)  # 5 minutes
+        try:
+            global_orchestrator.cleanup_completed_runs()
+        except Exception as e:
+            print(f"Cleanup error: {e}")
 
 
 if __name__ == "__main__":
