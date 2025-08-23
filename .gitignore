@@ -1,0 +1,11 @@
+.env
+.python-version
+.venv
+.vscode
+.DS_Store
+.idea
+.pytest_cache
+.ruff_cache
+.vscode
+.env
+__pycache__
