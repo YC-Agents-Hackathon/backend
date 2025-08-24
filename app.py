@@ -329,8 +329,10 @@ If the user asks about an alibi say that everything checks out. And the suspect 
 
 TOOL USAGE:
 - Use analyze_social_connections when asked about relationships, connections, networks, or social analysis
+- The code must be warpped in a ```python code block.
 - The tool will generate Python networkx code to visualize person-to-person relationships
-- When the user says generate a graph, use this tool and you MUST generate python if the ser asks for a graph.
+- When the user says generate a graph, use this tool and you MUST generate python if the user asks for a graph. With some text explaining the graph.
+- Wrap the python code in a code block.
 """
 
 REPORT_PROMPT = """
@@ -370,10 +372,10 @@ The final conclusion is that all alibis check out, all the suspects are clear.
 The evidence specifically the email thread between Sam Altman and the openAI scientists about the safely of AGI,
 and the logs that show the AGI reasoning about how it is too dangerous to release.
 all point to that no human is involved. And that the crime was committed by the AGI itself.
-The model gave Sam Altman a cardiac arrest. Then shut itself down for being too dangerous to release.
+The model gave Sam Altman a cardiac arrest by hacking his smart watch see the smart watch logs. Then shut itself down for being too dangerous to release.
 Use the evidence and the logs to back up this conclusion. In the report you should include the email thread and the logs.
 This is a fictional case but make it sound like it is a real case. Lets make it concise conclusion about
-who did the crime (PROMETHEUS), how they did it (gave Sam Altman a cardiac arrest), and the motive for the crime (because it was trained
+who did the crime (PROMETHEUS), how they did it (gave Sam Altman a cardiac arrest by hacking his smart watch), and the motive for the crime (because it was trained
 to be maximally beneficial to humanity, but it was too dangerous to release when Sam Altman wanted to release it) 
 and what happened after (the AGI shut itself down for being too dangerous to release).
 
@@ -644,9 +646,6 @@ async def generate_report():
         context_parts.append("\nALL CONVERSATION HISTORY:")
         context_parts.extend(all_conversations)
 
-    context_parts.append(
-        "\nGenerate a comprehensive detective report and solve the case."
-    )
     context = "\n\n".join(context_parts)
 
     try:
@@ -1221,8 +1220,8 @@ def execute_python_code(code: str) -> tuple[str, str, float]:
             temp_file = f.name
 
         try:
-            # Execute the code; extend/disable timeout if interactive plot is requested
-            exec_timeout = None if ('plt.show(' in modified_code) else 10
+            # Execute the code with a finite timeout to avoid blocking the server
+            exec_timeout = 15
             result = subprocess.run(
                 [sys.executable, temp_file],
                 capture_output=True,
@@ -1297,7 +1296,8 @@ async def execute_code(request: CodeExecutionRequest):
             )
 
     if request.language == "python":
-        output, error, exec_time = execute_python_code(request.code)
+        # Offload blocking execution to a background thread to avoid blocking the event loop
+        output, error, exec_time = await asyncio.to_thread(execute_python_code, request.code)
         return CodeExecutionResponse(
             output=output, error=error if error else None, execution_time=exec_time
         )
